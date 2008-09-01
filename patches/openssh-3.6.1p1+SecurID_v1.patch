@@ -1,0 +1,1231 @@
+diff -ruN openssh-3.6.1p1/Makefile.in openssh-3.6.1p1-securid/Makefile.in
+--- openssh-3.6.1p1/Makefile.in	Thu Mar 20 19:34:34 2003
++++ openssh-3.6.1p1-securid/Makefile.in	Tue Apr  8 13:37:06 2003
+@@ -81,7 +81,7 @@
+ 	monitor_mm.o monitor.o monitor_wrap.o monitor_fdpass.o \
+ 	kexdhs.o kexgexs.o \
+ 	auth-krb5.o auth-krb4.o \
+-	loginrec.o auth-pam.o auth2-pam.o auth-sia.o md5crypt.o
++	loginrec.o auth-pam.o auth2-pam.o auth-sia.o auth-securid.o md5crypt.o
+ 
+ MANPAGES	= scp.1.out ssh-add.1.out ssh-agent.1.out ssh-keygen.1.out ssh-keyscan.1.out ssh.1.out sshd.8.out sftp-server.8.out sftp.1.out ssh-rand-helper.8.out ssh-keysign.8.out sshd_config.5.out ssh_config.5.out
+ MANPAGES_IN	= scp.1 ssh-add.1 ssh-agent.1 ssh-keygen.1 ssh-keyscan.1 ssh.1 sshd.8 sftp-server.8 sftp.1 ssh-rand-helper.8 ssh-keysign.8 sshd_config.5 ssh_config.5
+diff -ruN openssh-3.6.1p1/README.SecurID openssh-3.6.1p1-securid/README.SecurID
+--- openssh-3.6.1p1/README.SecurID
++++ openssh-3.6.1p1-securid/README.SecurID	Tue Apr  8 23:36:29 2003
+@@ -0,0 +1,141 @@
++/*
++ * Author: Theo Schlossnagle <jesus@omniti.com>
++ * Copyright (c) 2000-2002 Theo Schlossnagle <jesus@omniti.com>
++ *                    All rights reserved
++ *
++ * Created: September 21, 2000
++ * License: OpenSSH License.  See the license for OpenSSH for more details.
++ *
++ * Update for ACE 5.X by Jim Matthews -- j.w.matthews@cox.net
++ * Patch works only for OpenSSH version 3.6.1p1
++ *
++ * April 5th, 2003: -- j.w.matthews@cox.net
++ * Updated to support openssh v3.6.1p1.
++ * Modified to support both new (5.X+) and old (<= 4.X) securid client API libraries.
++ * Added --with-securid-old for <= 4.X support, --with-securid is for new API support.
++ * Added sd_close for ACE server disconnect at the end of authentication for old API support.
++ *
++ * March 3rd, 2003: -- j.w.matthews@cox.net
++ * Changed "user not in [securid] allow", "user in [securid] deny" SecurID messages from
++ * type "error" to type "log" in auth-securid.c.
++ *
++ * March 1st, 2003: -- j.w.matthews@cox.net
++ * Rewrote functions in auth-securid.c to support the ACE server version 5.X API.
++ * Modified configure script to check for new libaceclnt.a and acexport.h.
++ * Fixed AllowNonSecurid option in monitor.c and servconf.c so it actually works now.
++ * Fixed potential memory leak in auth-securid.c for SecurID shell assignment variable.
++ *
++ * October 22nd, 2002:
++ * Updated to 3.5p1 -- jesus@omniti.com
++ * incorporated a few minor fixes for the auth phase.
++ *
++ * June 26th, 2002:
++ * Updated to 3.4p1 -- jesus@omniti.com
++ * Revamped the auth mechanism to use the new privilege separation code.
++ * Updated man pages in their new locations.
++ *
++ * March 15th, 2002:
++ * Updated to 3.1p1 -- jesus@omniti.com
++ * Added beeter support for auth2-pam.  Added NegateSecurIDUsers option to
++ * negate the meaning of the SecureIDUsersFile option.
++ *
++ * December 11th, 2001:
++ * Updated to 3.0.2p1 -- jesus@omniti.com
++ * no new features
++ *
++ * December 3rd, 2001:
++ * Updated to 3.0.1p1 -- jesus@omniti.com
++ * no new features
++ *
++ * November 8th, 2001:
++ * Updated to 3.0p1 -- jesus@omniti.com
++ * no new features
++ *
++ * September 30th, 2001:
++ * Updated to 2.9.9p2 -- jesus@omniti.com
++ * no new features
++ *
++ * June 28, 2001:
++ * Updated to 2.9p2 -- jesus@omniti.com
++ * no new features
++ *
++ * April 24, 2001:
++ * Updated to 2.9p1 -- jesus@omniti.com
++ * added autoconf clauses to fault if sdiclient.a and headers aren't there.
++ *
++ * April 21, 2001:
++ * Updated to 2.5.2p2 -- jesus@omniti.com
++ * Incorporated some bug fixes from Anders Olsen to fix next-token code.
++ *
++ * March 19, 2001:
++ * Updated to 2.5.2p1 -- jesus@omniti.com
++ *
++ * December 20, 2000:
++ * Updated to 2.3.0p1 -- jesus@omniti.com
++ *
++ * Jan 9th, 2001:
++ * Added SecurIDUsersFile, SecurIDIgnoreShell, AllowNonSecurID directives
++ * to the sshd_config file.  These parameters are documented in the man page.
++ * This provides a more logical seperationg between fail-through due to system
++ * failure and fall-through by configuration. (fall-through vs. fail-through)
++ *   -- jesus@omniti.com
++ */
++
++Seems like a few people are interested.  So here is the patch.
++
++This has only been tested on UNICIES that support PAM.  There is untested
++(only 5 lines) code in auth-passwd.c that should provide the same
++functionality for normal (non-PAM) password verifications.
++
++The patch is logical quite small, the physical patch bulky because it contains
++all the line number changes in "configure" after running autoconf on the
++modified configure.in file (in which I changed maybe 10 lines -- Yuk.)
++
++The sshd man page has been patched too :-)  Read it for the two new options
++relating to SecurID.
++
++How it works:
++
++0) apply patch ;-)  You must use GNU patch (get it from ftp.gnu.org, it free.)
++1) copy ACE headers (in SecurID inc directory) into either a standard
++   include place (like /usr/local/include) or into the openssh source tree or add
++   the --with-cflags=-I/path/to/ace/inc (where the include files are located)
++2) copy the libaceclnt.a (for ACE 5.X) or sdiclient.a (for ACE <= 4.X) for your
++   OS (from /path/to/ace/lib/<arch>) into the openssh source tree.
++
++Make sure that /var/ace contains your sdconf.rec, etc.  If you installed
++SecurID client or server on a machine it should be this way already.  If you
++used a non-standard install location do a "ln -s /path/to/ace/data /var/ace"
++
++3) add --with-securid to the configure flags for new ACE 5.X support.  Use
++   --with-securid-old for ACE API version 4.X and older.
++
++It will trigger if a user has a shell in /etc/passwd that ends with "sdshell"
++and it snags your shell the same way sdshell does.  Users with other shells
++will log in as if SecurID didn't exist.
++
++Done:
++  o Normal passcode verification
++  o Enter next token for verification
++    (use ssh -v to see the *useful* debgging messages)
++
++ssh -v will let you know if:
++ o your code was accepted.
++ o your code was rejected.
++ o you are required to wait for the next token and enter that.
++
++TODO:
++  o Handle PIN creation and changing (as their are by default three log in
++attempts, it should be straight forward to integrate in these additions --
++both of these operations require exactly three user inputs.)
++  o Add sshd_config parameter to specify the VAR_ACE location (forced to
++/var/ace OR VAR_ACE environment variable now.)
++
++DISCLAIMER:
++  I works for me (yes, in production).  If you get locked out of a production
++system becuase you replaced your sshd with this one, feeling really dumb is
++YOUR responsibility NOT mine.  It is not my fault :-D
++
++Hope this is useful! scp (and all other tools that can use ssh like rsync and
++cvs) will work now!!!! Hooray!
++
+diff -ruN openssh-3.6.1p1/acconfig.h openssh-3.6.1p1-securid/acconfig.h
+--- openssh-3.6.1p1/acconfig.h	Sun Mar  9 19:38:10 2003
++++ openssh-3.6.1p1-securid/acconfig.h	Tue Apr  8 13:37:06 2003
+@@ -216,6 +216,10 @@
+ /* Define if you want S/Key support */
+ #undef SKEY
+ 
++/* Define if you want SecurID support */
++#undef SECURID
++#undef SECURID_NEW
++
+ /* Define if you want TCP Wrappers support */
+ #undef LIBWRAP
+ 
+diff -ruN openssh-3.6.1p1/auth-pam.c openssh-3.6.1p1-securid/auth-pam.c
+--- openssh-3.6.1p1/auth-pam.c	Tue Jan 21 23:42:26 2003
++++ openssh-3.6.1p1-securid/auth-pam.c	Tue Apr  8 13:37:06 2003
+@@ -210,6 +210,19 @@
+ 
+ 	do_pam_set_conv(&conv);
+ 
++#ifdef SECURID
++        if (options.securid_authentication == 1) {
++                int ret;
++                debug("Attempting SecurID authentication user \"%.100s\"", pw->pw_name);
++                ret = auth_securid(authctxt, password);
++                if (ret >= 0)
++                        return ret;
++                /* Only returns < 0 if the account is not a SecurID account */
++                /* Fall back to ordinary passwd authentication. */
++        } else {
++                debug("SecurID disabled in server config.  Using PAM.");
++        }
++#endif
+ 	__pampasswd = password;
+ 
+ 	pamstate = INITIAL_LOGIN;
+diff -ruN openssh-3.6.1p1/auth-passwd.c openssh-3.6.1p1-securid/auth-passwd.c
+--- openssh-3.6.1p1/auth-passwd.c	Wed Jan 29 18:20:57 2003
++++ openssh-3.6.1p1-securid/auth-passwd.c	Tue Apr  8 13:37:06 2003
+@@ -146,6 +146,18 @@
+ 		return 1;
+ 	}
+ # endif
++#ifdef SECURID
++	if (options.securid_authentication == 1) {
++		int ret = auth_securid(authctxt, password);
++		if (ret >= 0)
++			return ret;
++		/* Only returns < 0 if the account is not a SecurID account */
++		/* Fall back to ordinary passwd authentication. */
++		if(ret<0 && !options.allow_nonsecurid) {
++		return 0;
++		}
++	}
++#endif
+ # ifdef WITH_AIXAUTHENTICATE
+ 	authsuccess = (authenticate(pw->pw_name,password,&reenter,&authmsg) == 0);
+ 
+diff -ruN openssh-3.6.1p1/auth-securid.c openssh-3.6.1p1-securid/auth-securid.c
+--- openssh-3.6.1p1/auth-securid.c
++++ openssh-3.6.1p1-securid/auth-securid.c	Wed Apr  9 21:44:26 2003
+@@ -0,0 +1,309 @@
++/*
++ * Author: Theo Schlossnagle <jesus@omniti.com>
++ * Copyright (c) 2000 Theo Schlossnagle <jesus@omniti.com>
++ *                    All rights reserved
++ * Created: September 21, 2000
++ * This file contains the code to process a SecurID authentication
++ * including the "next token" request.
++ */
++
++/* 
++ * Added ACE Server API version 5.X Support
++ * Jim Matthews (JWM)
++ *
++ */
++
++#include "includes.h"
++
++RCSID("$OpenBSD: auth-securid.c,v 1.0 2000/09/21 01:39:38 jesus Exp $");
++/* $Id: auth-securid.c,v 1.3 2003/04/08 21:32:31 jmatthew Exp jmatthew $ */
++
++#include "packet.h"
++#include "ssh.h"
++#include "log.h"
++#include "servconf.h"
++#include "xmalloc.h"
++#include "auth.h"
++
++#ifdef WITH_AIXAUTHENTICATE
++# include <login.h>
++#endif
++#ifdef HAVE_HPUX_TRUSTED_SYSTEM_PW
++# include <hpsecurity.h>
++# include <prot.h>
++#endif
++#ifdef HAVE_SHADOW_H
++# include <shadow.h>
++#endif
++#ifdef HAVE_GETPWANAM
++# include <sys/label.h>
++# include <sys/audit.h>
++# include <pwdadj.h>
++#endif
++#if defined(HAVE_MD5_PASSWORDS) && !defined(HAVE_MD5_CRYPT)
++# include "md5crypt.h"
++#endif /* defined(HAVE_MD5_PASSWORDS) && !defined(HAVE_MD5_CRYPT) */
++
++#ifdef SECURID
++#ifdef SECURID_NEW
++/* Only need acexport.h for 5.0 API JWM */
++# include "acexport.h"
++
++#else
++
++# include "sdi_athd.h"
++# include "sdconf.h"
++# include "sdacmvls.h"
++
++union config_record configure;
++#endif
++#endif
++
++/*
++ * Tries to authenticate the user using password.  Returns true if
++ * authentication succeeds.
++ */
++#define INBUFFLEN 256
++
++int
++securid_usersfile_find(const char *pw_name)
++{
++	extern ServerOptions options;
++	FILE *inf;
++	char inbuff[INBUFFLEN];
++	struct stat fileinfo;
++	int retval = 0;
++
++	if(!options.securid_usersfile) {
++		error("In securid_usersfile_find() with NULL filename!");
++		return -1;
++	}
++	if(lstat(options.securid_usersfile, &fileinfo)) {
++		error("Cannot open %s: %s",
++		      options.securid_usersfile, strerror(errno));
++		return -1;
++	}
++	if(fileinfo.st_mode & (S_IWOTH|S_IWGRP)) {
++		error("SecurIDUsersFile is writeable by group and other");
++		return -1;
++	}
++	if(!(inf = fopen(options.securid_usersfile, "r"))) {
++		error("Cannot open %s: %s",
++		      options.securid_usersfile, strerror(errno));
++		return -1;
++	}
++	while(fgets(inbuff,INBUFFLEN-1,inf) != NULL) {
++		if(inbuff[strlen(inbuff) - 1] == '\n')
++			inbuff[strlen(inbuff) - 1] = '\0';
++		retval = !strcmp(inbuff,pw_name);
++		if(retval) break;
++        }
++	fclose(inf);
++	if(retval) return 1;
++	debug2("Failed to find %s in %s",
++		pw_name, options.securid_usersfile);
++	return 0;
++}
++int
++auth_securid(Authctxt *authctxt, const char *password)
++{
++	static int state = 0;	/* This tells us where we expect a
++					0 "PIN"
++					1 "Next Token"
++				*/
++	int doauth;
++	char *ecp;
++	/* Changed this to static, since pw->shell does not get redefined, prevents mem leak JWM */
++	/* Allocate 256 chars for shell JWM */
++	static char shell[256];
++	extern ServerOptions options;
++        struct passwd *pw;
++#ifndef SECURID
++	return -1;
++#else
++	/* Add static for the nexttoken case -- Anders Olsen 20010409 */
++	/* API Change for ACE version 5.03 JWM */
++#ifdef SECURID_NEW
++	static SDI_HANDLE sd_dat;
++#else
++	static struct SD_CLIENT sd_dat, *sd;
++#endif
++
++        pw = authctxt->pw;
++	/* Check for users with no sdshell and pass them by. */
++	if(options.securid_usersfile) {
++		doauth = securid_usersfile_find(pw->pw_name);
++		if(!options.negate_securid_users && doauth == 0) {
++                        /* file is there, user is not, option respected */
++			/* log instead of error JWM */
++			log("User Not In SecurID Users Allow File");
++			if(options.allow_nonsecurid) return -1;
++			return 0;
++		} else if(options.negate_securid_users && doauth == 1) {
++                        /* file is there, user is, option negated */
++			/* log instead of error JWM */
++			log("User In SecurID Users Deny File");
++			if(options.allow_nonsecurid) return -1;
++			return 0;
++		} else if(doauth < 0) { /* File not there or bad perms! */
++			error("Failing SecurID login attempt");
++			return 0;	/* Fail */
++		}
++	} else {
++		/* No users securid_usersfile
++		   so use shells that end in sdshell */
++		if (!((ecp = strstr(pw->pw_shell, "sdshell")) &&
++				(*(ecp+7)=='\0'))) {
++			if(options.allow_nonsecurid) {
++                                return -1;
++                        } else {
++			        return 0;
++                        }
++                }
++	}
++	/* sd_check on with an empty password causes segfault against some
++		versions of sdiclient -- Anders Olsen 20010409 */
++	if (*password == '\0') {
++		debug2("auth_securid: empty password, skipping");
++		return 0;
++	}
++	/* Don't reopen session to securid-server is nexttoken
++		-- Adres Olsen 20010410 */
++	if (state == 0) {
++		int ret;
++#ifdef SECURID_NEW
++		/* API Change for ACE version 5.03 JWM */
++		/* Initialize the ace client, test for sdconf.rec and other setup */
++		if(AceInitialize() == SD_FALSE) {
++			error("SecurID: Failed to initialize ACE API library.");
++			if(options.securid_fallback) return -1;
++			return 0;
++		}
++		/* API Change for ACE version 5.03 JWM */
++		/* Initialize communication, check connection to server, etc */
++		ret = SD_Init(&sd_dat);
++		if(ret != ACM_OK) {
++			if(ret == ACE_INIT_NO_RESOURCE) {
++				error("SecurID: Couldn't allocate memory.");
++			}
++			if(ret == ACE_INIT_SOCKET_FAIL) {
++				error("SecurID: Couldn't create socket.");
++			}
++			error("SecurID: Couldn't establish client/server communications.");
++			if(options.securid_fallback) return -1;
++			return 0;
++		}
++		/* API addition for ACE version 5.03 JWM */
++		/* Lock Server */
++		if(SD_Lock(sd_dat,pw->pw_name) == ACM_OK) {
++			debug("SecurID: Locked Server");
++		} else {
++			error("SecurID: Failed to lock server.");
++			return 0;
++		}
++		/* API Change for version 5.03 JWM */
++		/* Check for valid authentication */
++		ret = SD_Check(sd_dat, (char *)password, pw->pw_name);
++		if(ret == ACM_OK) {
++			goto success;
++		} else {
++			if(ret == ACM_ACCESS_DENIED) {
++				error("SecurID: authentication failed.");
++			}
++			if(ret == ACM_NEXT_CODE_REQUIRED) {
++				error("SecurID: needs next token.");
++				state = 1; /* Process next try as sd_next */
++			}
++			if(ret == ACE_UNDEFINED_PASSCODE) {
++				error("SecurID: passcode invalid length or null");
++			}
++			if(ret == ACE_UNDEFINED_USERNAME) {
++				error("SecurID: username invalid length or null");
++			}
++			if(ret == ACE_ERR_INVALID_HANDLE) {
++				error("SecurID: handle value invalid");
++			}
++			if(ret == ACM_NEW_PIN_REQUIRED) {
++				error("SecurID: new pin required");
++			}
++			return 0; /* Failed! */
++		}
++#else	/* else old securid */
++                memset(&sd_dat, 0, sizeof(sd_dat));   /* clear struct */
++                sd = &sd_dat;
++
++                if(creadcfg()) {
++                        /* Can't read sdconf.rec!  Gotta bail */
++                        error("SecurID: Couldn't read sdconf.rec.");
++                        if(options.securid_fallback) return -1;
++                        return 0;
++                }
++                if(sd_init(sd)) {
++                        /* Can't establish client/server comms!  Gotta bail */
++                        error("SecurID: Couldn't establish client/server communications.");
++                        if(options.securid_fallback) return -1;
++                        return 0;
++                }
++                /* Auth PIN... */
++                ret = sd_check((char *)password, pw->pw_name, sd);
++                if(ret == ACM_OK) {
++                        goto success;
++                }
++                if(ret == ACM_ACCESS_DENIED) {
++                        error("SecurID: passcode rejected.");
++                        return 0; /* Failed! */
++                }
++                if(ret == ACM_NEXT_CODE_REQUIRED) {
++                        error("SecurID: needs next token.");
++                        state = 1; /* Process next try as sd_next */
++                        return 0;  /* Fail, so ssh will prmpt again */
++                }
++#endif
++	} else {
++		/* Auth next token... */
++		int ret;
++		state = 0;  /* Set back to PIN mode */
++#ifdef SECURID_NEW
++		/* API Change for version 5.03 JWM */
++		ret = SD_Next(sd_dat, (char *)password);
++#else
++		ret = sd_next((char *)password, sd);
++#endif
++		if(ret == ACM_OK) {
++			goto success;
++		}
++		error("SecurID: passcode rejected.");
++		return 0; /* Failed */
++	}
++	error("SecurID: unhandled sdcheck() return code.");
++	return 0; /* Failed! */
++
++success:
++#ifdef SECURID_NEW
++	/* Clear mem for shell */
++	memset(shell, 0, sizeof(shell));
++#endif
++	if(!options.securid_ignore_shell) {
++#ifdef SECURID_NEW
++	/* Changed for ACE 5.0 API JWM */
++		if(!AceGetShell(sd_dat,shell)) {
++			error("SecurID: Failed to get user's shell from server.");
++			return 0;
++		}	
++#else
++	strcpy(shell,sd->shell);
++#endif
++	pw->pw_shell = shell;
++	}
++#ifdef SECURID_NEW
++	if(SD_Close(sd_dat) != ACM_OK) {
++		error("SecurID: SD_Close - Handle invalid.");
++	}
++#else
++	if(!sd_close()) {
++		error("SecurID: sd_close failed.");
++	}
++#endif
++	return 1; /* Success */
++#endif
++}
+diff -ruN openssh-3.6.1p1/auth.h openssh-3.6.1p1-securid/auth.h
+--- openssh-3.6.1p1/auth.h	Thu Sep 26 23:26:01 2002
++++ openssh-3.6.1p1-securid/auth.h	Tue Apr  8 13:37:06 2003
+@@ -100,6 +100,9 @@
+ auth_rhosts2(struct passwd *, const char *, const char *, const char *);
+ 
+ int	 auth_rhosts_rsa(struct passwd *, char *, Key *);
++#ifdef SECURID
++int      auth_securid(Authctxt *, const char *);
++#endif
+ int      auth_password(Authctxt *, const char *);
+ int      auth_rsa(struct passwd *, BIGNUM *);
+ int      auth_rsa_challenge_dialog(Key *);
+diff -ruN openssh-3.6.1p1/auth2-passwd.c openssh-3.6.1p1-securid/auth2-passwd.c
+--- openssh-3.6.1p1/auth2-passwd.c	Thu Jun  6 16:27:56 2002
++++ openssh-3.6.1p1-securid/auth2-passwd.c	Tue Apr  8 13:37:06 2003
+@@ -47,12 +47,26 @@
+ 		log("password change not supported");
+ 	password = packet_get_string(&len);
+ 	packet_check_eom();
++#ifdef SECURID
++	/* Try SecurID regardless */
++	if (authctxt->valid && options.securid_authentication == 1) {
++		authenticated = PRIVSEP(auth_securid(authctxt, password));
++		/* Only returns < 0 if the account is not a SecurID account */
++		/* Fall back to ordinary passwd authentication. */
++		if(authenticated < 0)
++			authenticated = 0;
++		else
++			goto passreturn;
++	}
++	/* No... continue */
++#endif
+ 	if (authctxt->valid &&
+ #ifdef HAVE_CYGWIN
+ 	    check_nt_auth(1, authctxt->pw) &&
+ #endif
+ 	    PRIVSEP(auth_password(authctxt, password)) == 1)
+ 		authenticated = 1;
++passreturn:
+ 	memset(password, 0, len);
+ 	xfree(password);
+ 	return authenticated;
+diff -ruN openssh-3.6.1p1/config.h.in openssh-3.6.1p1-securid/config.h.in
+--- openssh-3.6.1p1/config.h.in	Tue Apr  1 06:57:29 2003
++++ openssh-3.6.1p1-securid/config.h.in	Tue Apr  8 13:37:06 2003
+@@ -216,6 +216,10 @@
+ /* Define if you want S/Key support */
+ #undef SKEY
+ 
++/* Define if you want SecurID support */
++#undef SECURID
++#undef SECURID_NEW
++
+ /* Define if you want TCP Wrappers support */
+ #undef LIBWRAP
+ 
+diff -ruN openssh-3.6.1p1/configure openssh-3.6.1p1-securid/configure
+--- openssh-3.6.1p1/configure	Tue Apr  1 06:57:28 2003
++++ openssh-3.6.1p1-securid/configure	Tue Apr  8 16:56:12 2003
+@@ -849,6 +849,8 @@
+   --with-zlib=PATH        Use zlib in PATH
+   --with-skey[=PATH]      Enable S/Key support
+                             (optionally in PATH)
++  --with-securid          Enable ACE 5.X+ SecurID support
++  --with-securid-old      Enable SecurID 4.X and earlier SecurID support
+   --with-tcp-wrappers[=PATH]      Enable tcpwrappers support
+                             (optionally in PATH)
+   --with-pam              Enable PAM support
+@@ -6647,7 +6649,149 @@
+ 
+ 
+ fi;
++SECURID_MSG="no"
+ 
++# Check whether --with-securid or --without-securid was given.
++if test "${with_securid+set}" = set; then
++  withval="$with_securid"
++
++		if test "x$withval" != "xno" ; then
++			saved_LIBS="$LIBS"
++			LIBS="$LIBS libaceclnt.a -lpthread"
++			echo "$as_me:$LINENO: checking for libaceclnt.a and includes" >&5
++echo $ECHO_N "checking for libaceclnt.a and includes... $ECHO_C" >&6
++			cat >conftest.$ac_ext <<_ACEOF
++#line $LINENO "configure"
++#include "confdefs.h"
++
++#include "acexport.h"
++					SDI_HANDLE sd_dat;
++
++#ifdef F77_DUMMY_MAIN
++#  ifdef __cplusplus
++     extern "C"
++#  endif
++   int F77_DUMMY_MAIN() { return 1; }
++#endif
++int
++main ()
++{
++AceInitialize(); SD_Init(&sd_dat);
++  ;
++  return 0;
++}
++_ACEOF
++rm -f conftest.$ac_objext conftest$ac_exeext
++if { (eval echo "$as_me:$LINENO: \"$ac_link\"") >&5
++  (eval $ac_link) 2>&5
++  ac_status=$?
++  echo "$as_me:$LINENO: \$? = $ac_status" >&5
++  (exit $ac_status); } &&
++         { ac_try='test -s conftest$ac_exeext'
++  { (eval echo "$as_me:$LINENO: \"$ac_try\"") >&5
++  (eval $ac_try) 2>&5
++  ac_status=$?
++  echo "$as_me:$LINENO: \$? = $ac_status" >&5
++  (exit $ac_status); }; }; then
++
++					echo "$as_me:$LINENO: result: yes" >&5
++echo "${ECHO_T}yes" >&6
++					cat >>confdefs.h <<\_ACEOF
++#define SECURID 1
++_ACEOF
++
++					cat >>confdefs.h <<\_ACEOF
++#define SECURID_NEW 1
++_ACEOF
++
++					SECURID_MSG="yes: 5.X+"
++
++else
++  echo "$as_me: failed program was:" >&5
++cat conftest.$ac_ext >&5
++
++					{ { echo "$as_me:$LINENO: error: *** libaceclnt.a or includes missing" >&5
++echo "$as_me: error: *** libaceclnt.a or includes missing" >&2;}
++   { (exit 1); exit 1; }; }
++
++
++fi
++rm -f conftest.$ac_objext conftest$ac_exeext conftest.$ac_ext
++		fi
++
++
++fi;
++
++# Check whether --with-securid-old or --without-securid-old was given.
++if test "${with_securid_old+set}" = set; then
++  withval="$with_securid_old"
++
++		if test "x$withval" != "xno" ; then
++			saved_LIBS="$LIBS"
++			LIBS="$LIBS sdiclient.a"
++			echo "$as_me:$LINENO: checking for sdiclient.a and includes" >&5
++echo $ECHO_N "checking for sdiclient.a and includes... $ECHO_C" >&6
++			cat >conftest.$ac_ext <<_ACEOF
++#line $LINENO "configure"
++#include "confdefs.h"
++
++#include "sdi_athd.h"
++#include "sdconf.h"
++#include "sdacmvls.h"
++					struct SD_CLIENT sd_dat, *sd;
++					union config_record configure;
++
++#ifdef F77_DUMMY_MAIN
++#  ifdef __cplusplus
++     extern "C"
++#  endif
++   int F77_DUMMY_MAIN() { return 1; }
++#endif
++int
++main ()
++{
++sd = &sd_dat; creadcfg(); sd_init(sd);
++  ;
++  return 0;
++}
++_ACEOF
++rm -f conftest.$ac_objext conftest$ac_exeext
++if { (eval echo "$as_me:$LINENO: \"$ac_link\"") >&5
++  (eval $ac_link) 2>&5
++  ac_status=$?
++  echo "$as_me:$LINENO: \$? = $ac_status" >&5
++  (exit $ac_status); } &&
++         { ac_try='test -s conftest$ac_exeext'
++  { (eval echo "$as_me:$LINENO: \"$ac_try\"") >&5
++  (eval $ac_try) 2>&5
++  ac_status=$?
++  echo "$as_me:$LINENO: \$? = $ac_status" >&5
++  (exit $ac_status); }; }; then
++
++					echo "$as_me:$LINENO: result: yes" >&5
++echo "${ECHO_T}yes" >&6
++					cat >>confdefs.h <<\_ACEOF
++#define SECURID 1
++_ACEOF
++
++					SECURID_MSG="yes: <= 4.X"
++
++else
++  echo "$as_me: failed program was:" >&5
++cat conftest.$ac_ext >&5
++
++					{ { echo "$as_me:$LINENO: error: *** sdiclient.a or includes missing" >&5
++echo "$as_me: error: *** sdiclient.a or includes missing" >&2;}
++   { (exit 1); exit 1; }; }
++
++
++fi
++rm -f conftest.$ac_objext conftest$ac_exeext conftest.$ac_ext
++		fi
++
++
++fi;
++
+ # Check whether user wants TCP wrappers support
+ TCPW_MSG="no"
+ 
+@@ -18319,9 +18463,10 @@
+ echo "                 Smartcard support: $SCARD_MSG"
+ echo "                       AFS support: $AFS_MSG"
+ echo "                     S/KEY support: $SKEY_MSG"
++echo "                   SecurID support: $SECURID_MSG"
+ echo "              TCP Wrappers support: $TCPW_MSG"
+ echo "              MD5 password support: $MD5_MSG"
+-echo "       IP address in \$DISPLAY hack: $DISPLAY_HACK_MSG"
++echo "      IP address in \$DISPLAY hack: $DISPLAY_HACK_MSG"
+ echo "          Use IPv4 by default hack: $IPV4_HACK_MSG"
+ echo "           Translate v4 in v6 hack: $IPV4_IN6_HACK_MSG"
+ echo "                  BSD Auth support: $BSD_AUTH_MSG"
+diff -ruN openssh-3.6.1p1/configure.ac openssh-3.6.1p1-securid/configure.ac
+--- openssh-3.6.1p1/configure.ac	Thu Mar 20 20:18:09 2003
++++ openssh-3.6.1p1-securid/configure.ac	Tue Apr  8 13:37:06 2003
+@@ -547,6 +547,61 @@
+ 		fi
+ 	]
+ )
++SECURID_MSG="no"
++AC_ARG_WITH(securid,
++	[  --with-securid          Enable ACE 5.X+ SecurID support],
++	[
++		if test "x$withval" != "xno" ; then
++			saved_LIBS="$LIBS"
++			LIBS="$LIBS libaceclnt.a -lpthread"
++			AC_MSG_CHECKING(for libaceclnt.a and includes)
++			AC_TRY_LINK(
++				[
++#include "acexport.h"
++					SDI_HANDLE sd_dat;
++				],
++				[AceInitialize(); SD_Init(&sd_dat);],
++				[
++					AC_MSG_RESULT(yes)
++					AC_DEFINE(SECURID)
++					AC_DEFINE(SECURID_NEW)
++					SECURID_MSG="yes: 5.X+" 
++				],
++				[
++					AC_MSG_ERROR([*** libaceclnt.a or includes missing])
++				]
++			)
++		fi
++	]
++)
++AC_ARG_WITH(securid-old,
++	[  --with-securid-old      Enable SecurID 4.X and earlier SecurID support],
++	[
++		if test "x$withval" != "xno" ; then
++			saved_LIBS="$LIBS"
++			LIBS="$LIBS sdiclient.a"
++			AC_MSG_CHECKING(for sdiclient.a and includes)
++			AC_TRY_LINK(
++				[
++#include "sdi_athd.h"
++#include "sdconf.h"
++#include "sdacmvls.h"
++					struct SD_CLIENT sd_dat, *sd;
++					union config_record configure;
++				],
++				[sd = &sd_dat; creadcfg(); sd_init(sd);],
++				[
++					AC_MSG_RESULT(yes)
++					AC_DEFINE(SECURID)
++					SECURID_MSG="yes: <= 4.X"
++				],
++				[
++					AC_MSG_ERROR([*** sdiclient.a or includes missing])
++				]
++			)
++		fi
++	]
++)
+ 
+ # Check whether user wants TCP wrappers support
+ TCPW_MSG="no"
+@@ -2527,9 +2582,10 @@
+ echo "                 Smartcard support: $SCARD_MSG"
+ echo "                       AFS support: $AFS_MSG"
+ echo "                     S/KEY support: $SKEY_MSG"
++echo "                   SecurID support: $SECURID_MSG"
+ echo "              TCP Wrappers support: $TCPW_MSG"
+ echo "              MD5 password support: $MD5_MSG"
+-echo "       IP address in \$DISPLAY hack: $DISPLAY_HACK_MSG"
++echo "      IP address in \$DISPLAY hack: $DISPLAY_HACK_MSG"
+ echo "          Use IPv4 by default hack: $IPV4_HACK_MSG"
+ echo "           Translate v4 in v6 hack: $IPV4_IN6_HACK_MSG"
+ echo "                  BSD Auth support: $BSD_AUTH_MSG"
+diff -ruN openssh-3.6.1p1/monitor.c openssh-3.6.1p1-securid/monitor.c
+--- openssh-3.6.1p1/monitor.c	Tue Apr  1 06:43:39 2003
++++ openssh-3.6.1p1-securid/monitor.c	Tue Apr  8 13:37:06 2003
+@@ -100,6 +100,7 @@
+ int mm_answer_pwnamallow(int, Buffer *);
+ int mm_answer_auth2_read_banner(int, Buffer *);
+ int mm_answer_authserv(int, Buffer *);
++int mm_answer_authsecurid(int, Buffer *);
+ int mm_answer_authpassword(int, Buffer *);
+ int mm_answer_bsdauthquery(int, Buffer *);
+ int mm_answer_bsdauthrespond(int, Buffer *);
+@@ -161,6 +162,9 @@
+     {MONITOR_REQ_AUTHSERV, MON_ONCE, mm_answer_authserv},
+     {MONITOR_REQ_AUTH2_READ_BANNER, MON_ONCE, mm_answer_auth2_read_banner},
+     {MONITOR_REQ_AUTHPASSWORD, MON_AUTH, mm_answer_authpassword},
++#ifdef SECURID
++    {MONITOR_REQ_AUTHSECURID, MON_AUTH, mm_answer_authsecurid},
++#endif
+ #ifdef USE_PAM
+     {MONITOR_REQ_PAM_START, MON_ONCE, mm_answer_pam_start},
+ #endif
+@@ -595,6 +599,53 @@
+ 	return (0);
+ }
+ 
++#ifdef SECURID
++int
++mm_answer_authsecurid(int socket, Buffer *m)
++{
++       static int call_count;
++       char *passwd;
++       int authenticated, plen;
++
++       passwd = buffer_get_string(m, &plen);
++       /* Only authenticate if the context is valid */
++       authenticated = 0;
++       if(options.securid_authentication && authctxt->valid) {
++               authenticated = auth_securid(authctxt, passwd);
++       /* Fixed fallback/nonsecurid JWM */
++               if(authenticated < 0) {
++                       if(options.password_authentication) {
++                               if(options.allow_nonsecurid || options.securid_fallback) {
++                                       debug2("Falling to password authentication.");
++                                       authenticated = auth_password(authctxt, passwd);
++                               } else {
++                                       authenticated = 0;
++                               }
++                       } else {
++                               authenticated = 0;
++                       }
++               }
++       }
++       memset(passwd, 0, strlen(passwd));
++       xfree(passwd);
++
++       buffer_clear(m);
++       buffer_put_int(m, authenticated);
++
++       debug3("%s: sending result %d", __func__, authenticated);
++       mm_request_send(socket, MONITOR_ANS_AUTHSECURID, m);
++
++       call_count++;
++       if (plen == 0 && call_count == 1)
++               auth_method = "none";
++       else
++               auth_method = "password";
++
++       /* Causes monitor loop to terminate if authenticated */
++       return (authenticated);
++}
++#endif
++
+ int
+ mm_answer_authpassword(int socket, Buffer *m)
+ {
+diff -ruN openssh-3.6.1p1/monitor.h openssh-3.6.1p1-securid/monitor.h
+--- openssh-3.6.1p1/monitor.h	Thu Sep 26 23:26:02 2002
++++ openssh-3.6.1p1-securid/monitor.h	Tue Apr  8 13:37:06 2003
+@@ -34,6 +34,7 @@
+ 	MONITOR_REQ_SIGN, MONITOR_ANS_SIGN,
+ 	MONITOR_REQ_PWNAM, MONITOR_ANS_PWNAM,
+ 	MONITOR_REQ_AUTH2_READ_BANNER, MONITOR_ANS_AUTH2_READ_BANNER,
++	MONITOR_REQ_AUTHSECURID, MONITOR_ANS_AUTHSECURID,
+ 	MONITOR_REQ_AUTHPASSWORD, MONITOR_ANS_AUTHPASSWORD,
+ 	MONITOR_REQ_BSDAUTHQUERY, MONITOR_ANS_BSDAUTHQUERY,
+ 	MONITOR_REQ_BSDAUTHRESPOND, MONITOR_ANS_BSDAUTHRESPOND,
+diff -ruN openssh-3.6.1p1/monitor_wrap.c openssh-3.6.1p1-securid/monitor_wrap.c
+--- openssh-3.6.1p1/monitor_wrap.c	Tue Apr  1 06:43:39 2003
++++ openssh-3.6.1p1-securid/monitor_wrap.c	Tue Apr  8 13:37:06 2003
+@@ -244,6 +244,33 @@
+ 	buffer_free(&m);
+ }
+ 
++#ifdef SECURID
++/* Do the securid authentication */
++int
++mm_auth_securid(Authctxt *authctxt, char *password)
++{
++       Buffer m;
++       int authenticated = 0;
++
++       debug3("%s entering", __func__);
++
++       buffer_init(&m);
++       buffer_put_cstring(&m, password);
++       mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_AUTHSECURID, &m);
++
++       debug3("%s: waiting for MONITOR_ANS_AUTHSECURID", __func__);
++       mm_request_receive_expect(pmonitor->m_recvfd, MONITOR_ANS_AUTHSECURID, &m);
++
++       authenticated = buffer_get_int(&m);
++
++       buffer_free(&m);
++
++       debug3("%s: user %sauthenticated",
++		__func__, authenticated ? "" : "not ");
++       return (authenticated);
++}
++#endif
++
+ /* Do the password authentication */
+ int
+ mm_auth_password(Authctxt *authctxt, char *password)
+diff -ruN openssh-3.6.1p1/monitor_wrap.h openssh-3.6.1p1-securid/monitor_wrap.h
+--- openssh-3.6.1p1/monitor_wrap.h	Thu Sep 26 23:26:04 2002
++++ openssh-3.6.1p1-securid/monitor_wrap.h	Tue Apr  8 13:37:06 2003
+@@ -45,6 +45,9 @@
+ void mm_inform_authserv(char *, char *);
+ struct passwd *mm_getpwnamallow(const char *);
+ char *mm_auth2_read_banner(void);
++#ifdef SECURID
++int mm_auth_securid(struct Authctxt *, char *);
++#endif
+ int mm_auth_password(struct Authctxt *, char *);
+ int mm_key_allowed(enum mm_keytype, char *, char *, Key *);
+ int mm_user_key_allowed(struct passwd *, Key *);
+diff -ruN openssh-3.6.1p1/servconf.c openssh-3.6.1p1-securid/servconf.c
+--- openssh-3.6.1p1/servconf.c	Sun Feb 23 20:04:34 2003
++++ openssh-3.6.1p1-securid/servconf.c	Tue Apr  8 13:37:06 2003
+@@ -86,6 +86,14 @@
+ 	options->hostbased_uses_name_from_packet_only = -1;
+ 	options->rsa_authentication = -1;
+ 	options->pubkey_authentication = -1;
++#ifdef SECURID
++	options->securid_authentication = -1;
++	options->securid_fallback = -1;
++	options->allow_nonsecurid = -1;
++	options->negate_securid_users = -1;
++	options->securid_usersfile = NULL;
++	options->securid_ignore_shell = -1;
++#endif
+ #if defined(KRB4) || defined(KRB5)
+ 	options->kerberos_authentication = -1;
+ 	options->kerberos_or_local_passwd = -1;
+@@ -200,6 +208,19 @@
+ 		options->rsa_authentication = 1;
+ 	if (options->pubkey_authentication == -1)
+ 		options->pubkey_authentication = 1;
++#ifdef SECURID
++	if (options->securid_authentication == -1)
++		options->securid_authentication = 1;
++	/* Fixed fallback and non-securid JWM */
++	if (options->securid_fallback == -1)
++		options->securid_fallback = 1;
++	if (options->allow_nonsecurid == -1)
++		options->allow_nonsecurid = 1;
++	if (options->negate_securid_users == -1) 
++		options->negate_securid_users = 0;
++	if (options->securid_ignore_shell == -1)
++		options->securid_ignore_shell = 0;
++#endif
+ #if defined(KRB4) || defined(KRB5)
+ 	if (options->kerberos_authentication == -1)
+ 		options->kerberos_authentication = 0;
+@@ -280,6 +301,10 @@
+ 	sPort, sHostKeyFile, sServerKeyBits, sLoginGraceTime, sKeyRegenerationTime,
+ 	sPermitRootLogin, sLogFacility, sLogLevel,
+ 	sRhostsAuthentication, sRhostsRSAAuthentication, sRSAAuthentication,
++#ifdef SECURID
++	sSecurIDAuthentication, sSecurIDFallBack, sAllowNonSecurID,
++	sNegateSecurIDUsers, sSecurIDUsersFile, sSecurIDIgnoreShell,
++#endif
+ #if defined(KRB4) || defined(KRB5)
+ 	sKerberosAuthentication, sKerberosOrLocalPasswd, sKerberosTicketCleanup,
+ #endif
+@@ -322,6 +347,14 @@
+ 	{ "keyregenerationinterval", sKeyRegenerationTime },
+ 	{ "permitrootlogin", sPermitRootLogin },
+ 	{ "syslogfacility", sLogFacility },
++#ifdef SECURID
++	{ "securidauthentication", sSecurIDAuthentication },
++	{ "securidfallback", sSecurIDFallBack },
++	{ "allownonsecurid", sAllowNonSecurID },
++	{ "negatesecuridusers", sNegateSecurIDUsers },
++	{ "securidusersfile", sSecurIDUsersFile },
++	{ "securidignoreshell", sSecurIDIgnoreShell },
++#endif
+ 	{ "loglevel", sLogLevel },
+ 	{ "rhostsauthentication", sRhostsAuthentication },
+ 	{ "rhostsrsaauthentication", sRhostsRSAAuthentication },
+@@ -663,6 +696,26 @@
+ 		intptr = &options->kerberos_tgt_passing;
+ 		goto parse_flag;
+ #endif
++#ifdef SECURID
++        case sSecurIDAuthentication:
++                intptr = &options->securid_authentication;
++                goto parse_flag;
++        case sSecurIDFallBack:
++                intptr = &options->securid_fallback;
++                goto parse_flag;
++        case sAllowNonSecurID:
++                intptr = &options->allow_nonsecurid;
++                goto parse_flag;
++        case sNegateSecurIDUsers:
++                intptr = &options->negate_securid_users;
++                goto parse_flag;
++        case sSecurIDUsersFile:
++                charptr = &options->securid_usersfile;
++                goto parse_filename;
++        case sSecurIDIgnoreShell:
++                intptr = &options->securid_ignore_shell;
++                goto parse_flag;
++#endif
+ #ifdef AFS
+ 	case sAFSTokenPassing:
+ 		intptr = &options->afs_token_passing;
+diff -ruN openssh-3.6.1p1/servconf.h openssh-3.6.1p1-securid/servconf.h
+--- openssh-3.6.1p1/servconf.h	Wed Jul 31 21:28:39 2002
++++ openssh-3.6.1p1-securid/servconf.h	Tue Apr  8 13:37:07 2003
+@@ -88,6 +88,22 @@
+ 	int     kerberos_tgt_passing;	/* If true, permit Kerberos TGT
+ 					 * passing. */
+ #endif
++#ifdef SECURID
++	int     securid_authentication; /* If set, use securid */
++	int     securid_fallback;       /* If set, allow normal passwords
++                                           is master/slave are not accessible */
++	int     allow_nonsecurid;       /* If set, allow nonsecurid users
++                                           logins via other means (e.g. PAM) */
++	int     negate_securid_users;   /* If set, securid_usersfile is used
++                                           to determine who _doesn't_ get
++                                           authed via SecurID */
++	char   *securid_usersfile;      /* If set, only users in the file
++                                           will authenticate via SecurID
++                                           The shell need not be .../sdshell */
++	int     securid_ignore_shell;   /* If true, use the shell in /etc/passwd
++                                           instead of the shell proposed by
++                                           the ACE server. */
++#endif
+ #ifdef AFS
+ 	int     afs_token_passing;	/* If true, permit AFS token passing. */
+ #endif
+diff -ruN openssh-3.6.1p1/sshd_config.0 openssh-3.6.1p1-securid/sshd_config.0
+--- openssh-3.6.1p1/sshd_config.0	Tue Apr  1 06:57:32 2003
++++ openssh-3.6.1p1-securid/sshd_config.0	Tue Apr  8 13:37:07 2003
+@@ -27,6 +27,13 @@
+              patterns.  Only group names are valid; a numerical group ID is
+              not recognized.  By default, login is allowed for all groups.
+ 
++     ^[[1mAllowNonSecurID^[[0m
++             This will allow users that do not meet the SecurID login activaM-bM-^@M-^P
++             tion requirements (not in the SecurIDUsersFile or do not have a
++             shell ending with sdshell, if the SecurIDUsersFile option is used
++             or is omitted, respectively) to still log in using another auM-bM-^@M-^P
++             thentication method (e.g. PAM or passwd.)
++
+      ^[[1mAllowTcpForwarding^[[0m
+              Specifies whether TCP forwarding is permitted.  The default is
+              M-bM-^@M-^\yesM-bM-^@M-^].  Note that disabling TCP forwarding does not improve secuM-bM-^@M-^P
+@@ -249,6 +256,11 @@
+              and all connection attempts are refused if the number of unauM-bM-^@M-^P
+              thenticated connections reaches M-bM-^@M-^\fullM-bM-^@M-^] (60).
+ 
++     ^[[1mNegateSecurIDUsers^[[0m
++             Negates the meaning of the SecurIDUsers file.  Users in this file
++             Will not require SecurID auth, but all others will.  The
++             default is M-bM-^@M-^\noM-bM-^@M-^].
++
+      ^[[1mPAMAuthenticationViaKbdInt^[[0m
+              Specifies whether PAM challenge response authentication is
+              allowed. This allows the use of most PAM challenge response
+@@ -336,6 +348,43 @@
+              default is M-bM-^@M-^\yesM-bM-^@M-^].  This option applies to protocol version 1
+              only.
+ 
++      ^[[1mSecurIDAuthentication^[[0m
++              Specifies whether SecurID authentication is allowed.  The default
++              is yes.  SecurID authentication is enabled in both PAM and
++              PasswordAuthentication modes.
++
++              NOTES:  After you enter you SecurID passcode, SecurID may choose
++              to ask for the next code on your token.  To handle this event
++              without modifying the SSH client, the actual information that
++              sshd is asing for is passed in the debugging messages.  If your
++              login attempts fail, try sshing with -v and you can see if it is
++              asking for your passcode or for the next token.
++ 
++      ^[[1mSecurIDFallBack^[[0m
++              Specifies whether SecurID user logins will fallback to their
++              to an underlying form (PAM/PaswordAuthentication) if the SecurID
++              server is unavailable or the machine is not configured correctly.
++ 
++      ^[[1mSecurIDIgnoreShell^[[0m
++              Specifies whether sshd will respect the ACE server's propsed user
++              shell.  The default is M-bM-^@M-^\noM-bM-^@M-^].  If yes, then the shell in
++              /etc/passwd will be used instead, eliminating the need for a
++              /path/to/ace/prog/sdshell style shell.  This option only makes
++              sense when using the SecurIDUsersFile option.
++ 
++      ^[[1mSecurIDUsersFile^[[0m
++              The argument a filename that contains usernames that are to be
++              authenticated via SecurID.  By default this option is unset and
++              users will only be authenticated if their shell ends with sdshell
++
++              If the SecurIDIgnoreShell option is set to M-bM-^@M-^\yesM-bM-^@M-^], then the
++              shell in /etc/passwd will be used in place of the shell proposed
++              by the ACE server -- allowing a user to have different shells on
++              different machines.  In conjunction wth SecurIDIgnoreShell, this
++              can force sshd to use SecurID while other system authentications
++              use alternative methods without the complication of having sdshell
++              as the user's default shell.
++
+      ^[[1mServerKeyBits^[[0m
+              Defines the number of bits in the ephemeral protocol version 1
+              server key.  The minimum value is 512, and the default is 768.
+diff -ruN openssh-3.6.1p1/sshd_config.5 openssh-3.6.1p1-securid/sshd_config.5
+--- openssh-3.6.1p1/sshd_config.5	Tue Apr  1 06:42:14 2003
++++ openssh-3.6.1p1-securid/sshd_config.5	Tue Apr  8 13:37:07 2003
+@@ -78,6 +78,13 @@
+ Only group names are valid; a numerical group ID is not recognized.
+ By default, login is allowed for all groups.
+ .Pp
++.It Cm AllowNonSecurID
++This will allow users that do not meet the SecurID login 
++activation requirements (not in the SecurIDUsersFile or do not 
++have a shell ending with sdshell, if the SecurIDUsersFile option
++is used or is omitted, respectively) to still log in using another
++authentication method (e.g. PAM or passwd.)
++.Pp
+ .It Cm AllowTcpForwarding
+ Specifies whether TCP forwarding is permitted.
+ The default is
+@@ -422,6 +429,11 @@
+ are refused if the number of unauthenticated connections reaches
+ .Dq full
+ (60).
++.It Cm NegateSecurIDUsers
++Negates the meaning of the SecurIDUsers file.  Users in this file
++Will not require SecurID auth, but all others will.
++The default is
++.Dq no .
+ .It Cm PAMAuthenticationViaKbdInt
+ Specifies whether PAM challenge response authentication is allowed. This
+ allows the use of most PAM challenge response authentication modules, but
+@@ -556,6 +568,38 @@
+ The default is
+ .Dq yes .
+ This option applies to protocol version 1 only.
++.It Cm SecurIDAuthentication
++Specifies whether SecurID authentication is allowed.  The default
++is yes.  SecurID authentication si enabled in both PAM and
++PasswordAuthentication modes.
++.Dq yes .
++Note that after you enter you SecurID passcode, SecurID may choose
++to ask for the next code on your token.  To handle this event
++without modifying the SSH client, the actual information that
++sshd is asing for is passed in the debugging messages.  If your
++login attempts fail, try sshing with -v and you can see if it is
++asking for your passcode or for the next token.
++.It Cm SecurIDFallBack
++Specifies whether SecurID user logins will fallback to their
++to an underlying form (PAM/PaswordAuthentication) is the SecurID
++server is unavailable or the machine is not configured correctly.
++.It Cm SecurIDIgnoreShell
++Specifies whether sshd will respect the ACE server's propsed user
++shell.  The default is ``no''.  If yes, then the shell in 
++/etc/passwd will be used instead, eliminating the need for a
++/path/to/ace/prog/sdshell style shell.  This option only makes
++sense when using the SecurIDUsersFile option.
++.It Cm SecurIDUsersFile
++The argument a filename that contains usernames that are to be
++authenticated via SecurID.  By default this option is unset and
++users will only be authenticated if their shell ends with sdshell.
++If the SecurIDIgnoreShell option is set to ``yes'', then the 
++shell in /etc/passwd will be used in place of the shell proposed
++by the ACE server -- allowing a user to have different shells on
++different machines.  In conjunction wth SecurIDIgnoreShell, this
++can force sshd to use SecurID while other system authentications
++use alternative methods without the complication of having sdshell
++as the user's default shell.
+ .It Cm ServerKeyBits
+ Defines the number of bits in the ephemeral protocol version 1 server key.
+ The minimum value is 512, and the default is 768.

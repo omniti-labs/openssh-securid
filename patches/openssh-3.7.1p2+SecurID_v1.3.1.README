@@ -1,0 +1,160 @@
+/*
+ * Author: Theo Schlossnagle <jesus@omniti.com>
+ * Copyright (c) 2000-2002 Theo Schlossnagle <jesus@omniti.com>
+ *                    All rights reserved
+ *
+ * Created: September 21, 2000
+ * License: OpenSSH License.  See the license for OpenSSH for more details.
+ *
+ * Update for ACE 5.X by Jim Matthews -- j.w.matthews@cox.net
+ * Patch works only for OpenSSH version v3.7.1p2.
+ *
+ * September 27, 2003: -- j.w.matthews@cox.net
+ * Updated to support openssh v3.7.1p2
+ * Re-added SecurID man page entries previously included in the v3.6.1p2 patch.
+ * Changed "plen" from type int to type u_int in function mm_answer_authsecurid 
+ * in monitor.c to conform with openssh.
+ *
+ * September 17, 2003: -- j.w.matthews@cox.net
+ * Updated to support openssh v3.7.1p1.
+ *
+ * September 16, 2003: -- j.w.matthews@cox.net
+ * Updated to support openssh v3.7p1.
+ * In auth-securid.c log has changed to logit since it changed in v3.7p1.
+ * In pam-auth.c securid auth function is no longer needed.  v3.7p1 completely
+ * changed the way PAM is handled.
+ *
+ * June 4th, 2003: -- Nicolas Lidzborski <cpc@freeshell.org>
+ * Updated to support openssh v3.6.1p2
+ *
+ * April 5th, 2003: -- j.w.matthews@cox.net
+ * Updated to support openssh v3.6.1p1.
+ * Modified to support both new (5.X+) and old (<= 4.X) securid client API libraries.
+ * Added --with-securid-old for <= 4.X support, --with-securid is for new API support.
+ * Added sd_close for ACE server disconnect at the end of authentication for old API support.
+ *
+ * March 3rd, 2003: -- j.w.matthews@cox.net
+ * Changed "user not in [securid] allow", "user in [securid] deny" SecurID messages from
+ * type "error" to type "log" in auth-securid.c.
+ *
+ * March 1st, 2003: -- j.w.matthews@cox.net
+ * Rewrote functions in auth-securid.c to support the ACE server version 5.X API.
+ * Modified configure script to check for new libaceclnt.a and acexport.h.
+ * Fixed AllowNonSecurid option in monitor.c and servconf.c so it actually works now.
+ * Fixed potential memory leak in auth-securid.c for SecurID shell assignment variable.
+ *
+ * October 22nd, 2002:
+ * Updated to 3.5p1 -- jesus@omniti.com
+ * incorporated a few minor fixes for the auth phase.
+ *
+ * June 26th, 2002:
+ * Updated to 3.4p1 -- jesus@omniti.com
+ * Revamped the auth mechanism to use the new privilege separation code.
+ * Updated man pages in their new locations.
+ *
+ * March 15th, 2002:
+ * Updated to 3.1p1 -- jesus@omniti.com
+ * Added beeter support for auth2-pam.  Added NegateSecurIDUsers option to
+ * negate the meaning of the SecureIDUsersFile option.
+ *
+ * December 11th, 2001:
+ * Updated to 3.0.2p1 -- jesus@omniti.com
+ * no new features
+ *
+ * December 3rd, 2001:
+ * Updated to 3.0.1p1 -- jesus@omniti.com
+ * no new features
+ *
+ * November 8th, 2001:
+ * Updated to 3.0p1 -- jesus@omniti.com
+ * no new features
+ *
+ * September 30th, 2001:
+ * Updated to 2.9.9p2 -- jesus@omniti.com
+ * no new features
+ *
+ * June 28, 2001:
+ * Updated to 2.9p2 -- jesus@omniti.com
+ * no new features
+ *
+ * April 24, 2001:
+ * Updated to 2.9p1 -- jesus@omniti.com
+ * added autoconf clauses to fault if sdiclient.a and headers aren't there.
+ *
+ * April 21, 2001:
+ * Updated to 2.5.2p2 -- jesus@omniti.com
+ * Incorporated some bug fixes from Anders Olsen to fix next-token code.
+ *
+ * March 19, 2001:
+ * Updated to 2.5.2p1 -- jesus@omniti.com
+ *
+ * December 20, 2000:
+ * Updated to 2.3.0p1 -- jesus@omniti.com
+ *
+ * Jan 9th, 2001:
+ * Added SecurIDUsersFile, SecurIDIgnoreShell, AllowNonSecurID directives
+ * to the sshd_config file.  These parameters are documented in the man page.
+ * This provides a more logical seperationg between fail-through due to system
+ * failure and fall-through by configuration. (fall-through vs. fail-through)
+ *   -- jesus@omniti.com
+ */
+
+Seems like a few people are interested.  So here is the patch.
+
+This has only been tested on UNICIES that support PAM.  There is untested
+(only 5 lines) code in auth-passwd.c that should provide the same
+functionality for normal (non-PAM) password verifications.
+
+The patch is logical quite small, the physical patch bulky because it contains
+all the line number changes in "configure" after running autoconf on the
+modified configure.in file (in which I changed maybe 10 lines -- Yuk.)
+
+The sshd man page has been patched too :-)  Read it for the two new options
+relating to SecurID.
+
+How it works:
+
+0) apply patch ;-)  You must use GNU patch (get it from ftp.gnu.org, it free.)
+1) copy ACE headers (in SecurID inc directory) into either a standard
+   include place (like /usr/local/include) or into the openssh source tree or add
+   the --with-cflags=-I/path/to/ace/inc (where the include files are located)
+2) copy the libaceclnt.a (for ACE 5.X) or sdiclient.a (for ACE <= 4.X) for your
+   OS (from /path/to/ace/lib/<arch>) into the openssh source tree.
+
+Make sure that /var/ace contains your sdconf.rec, etc.  If you installed
+SecurID client or server on a machine it should be this way already.  If you
+used a non-standard install location do a "ln -s /path/to/ace/data /var/ace"
+
+3) add --with-securid to the configure flags for new ACE 5.X support.  Use
+   --with-securid-old for ACE API version 4.X and older.
+
+It will trigger if a user has a shell in /etc/passwd that ends with "sdshell"
+and it snags your shell the same way sdshell does.  Users with other shells
+will log in as if SecurID didn't exist.
+
+Done:
+  o Normal passcode verification
+  o Enter next token for verification
+    (use ssh -v to see the *useful* debgging messages)
+
+ssh -v will let you know if:
+ o your code was accepted.
+ o your code was rejected.
+ o you are required to wait for the next token and enter that.
+
+TODO:
+  o Handle PIN creation and changing (as their are by default three log in
+attempts, it should be straight forward to integrate in these additions --
+both of these operations require exactly three user inputs.)
+  o Add sshd_config parameter to specify the VAR_ACE location (forced to
+/var/ace OR VAR_ACE environment variable now.)
+
+DISCLAIMER:
+  I works for me (yes, in production).  If you get locked out of a production
+system becuase you replaced your sshd with this one, feeling really dumb is
+YOUR responsibility NOT mine.  It is not my fault :-D
+
+Hope this is useful! scp (and all other tools that can use ssh like rsync and
+cvs) will work now!!!! Hooray!
+
+
